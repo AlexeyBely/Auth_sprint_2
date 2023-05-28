@@ -1,0 +1,148 @@
+version: '3.5'
+volumes:
+  es_data:
+    name: ${CONTAINER_PREFIX}es
+  redis_data:
+    name: ${CONTAINER_PREFIX}redis
+  fastapi_data:
+    name: ${CONTAINER_PREFIX}fastapi
+  auth_db_data:
+    name: ${CONTAINER_PREFIX}auth_db
+  auth_data:
+    name: ${CONTAINER_PREFIX}auth
+  auth_redis_data:
+    name: ${CONTAINER_PREFIX}auth_redis
+  jaeger_data:
+    name: ${CONTAINER_PREFIX}jaeger
+
+services:
+  es:
+    image: elasticsearch:7.7.0
+    container_name: es
+    env_file:
+      - ./.env
+    expose:
+      - "9200:9200"
+    volumes:
+      - es_data:/data
+
+  redis:
+    image: redis:latest
+    container_name: redis
+    volumes:
+      - redis_data:/data
+
+  fastapi:
+    build: ./fastapi
+    container_name: ${CONTAINER_PREFIX}fastapi
+    entrypoint: >
+      sh -c "python /app/utils/wait-for-es.py host=$ES_HOST port=$ES_PORT &&
+             python /app/utils/wait-for-redis.py host=$REDIS_HOST port=$REDIS_PORT &&
+             uvicorn main:app --host 0.0.0.0 --port $FASTAPI_PORT"
+    depends_on:
+      - es
+      - redis
+    volumes:
+      - fastapi_data:/data
+      - ./utils/:/app/utils/
+    expose:
+      - ${FASTAPI_PORT}
+    env_file:
+      - ./.env
+    #ports:
+    #  - "9000:8000"
+
+  auth_db:
+    image: postgres:latest
+    container_name: auth_db
+    volumes:
+      -   auth_db_data:/var/lib/postgresql/data/
+    environment:
+      POSTGRES_DB: "${AUTH_POSTGRES_DB}"
+      POSTGRES_USER: "${AUTH_POSTGRES_USER}"
+      POSTGRES_PASSWORD: "${AUTH_POSTGRES_PASSWORD}"
+    #ports:
+    #  - "5433:5432"
+
+  auth:
+    build: ./auth
+    image: auth:1.0
+    container_name: auth
+    depends_on:
+      - auth_db
+      - auth_redis
+    volumes:
+      - auth_data:/data
+      - ./utils/:/app/utils/
+    entrypoint: >
+      sh -c "python ../utils/wait-for-postgres.py host=${AUTH_POSTGRES_HOST} port=${AUTH_POSTGRES_PORT} &&
+             python ../utils/wait-for-redis.py host=${AUTH_REDIS_HOST} port=${AUTH_REDIS_PORT} &&
+             flask db upgrade &&
+             python pywsgi.py &&
+             python grpc_server.py"
+    expose:
+      - ${FLASK_PORT}
+    env_file:
+      - ./.env
+    #ports:
+    #  - "5000:5000"
+
+  auth-grpc:
+    image: auth:1.0
+    container_name: auth-grpc
+    depends_on:
+      - auth_db
+      - auth_redis
+    volumes:
+      - auth_data:/data
+      - ./utils/:/app/utils/
+    entrypoint: >
+      sh -c "python ../utils/wait-for-postgres.py host=${AUTH_POSTGRES_HOST} port=${AUTH_POSTGRES_PORT} &&
+             python ../utils/wait-for-redis.py host=${AUTH_REDIS_HOST} port=${AUTH_REDIS_PORT} &&
+             flask db upgrade &&
+             python grpc_server.py"
+    expose:
+      - ${AUTH_GRPC_PORT}
+    env_file:
+      - ./.env
+    ports:
+      - "50051:50051"
+
+  auth_redis:
+    image: redis:latest
+    container_name: auth_redis
+    volumes:
+      - auth_redis_data:/data
+
+  jaeger:
+    image: jaegertracing/all-in-one:latest
+    container_name: ${CONTAINER_PREFIX}jaeger
+    depends_on:
+      - auth
+    volumes:
+      - jaeger_data:/data
+    ports:
+      - "${JAEGER_PORT}:${JAEGER_PORT}"
+      - "16686:16686"
+    expose:
+      - ${JAEGER_PORT}
+
+  nginx_auth:
+    image: nginx:latest
+    container_name: nginx_auth
+    depends_on:
+      - auth
+      - fastapi
+      - jaeger
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./nginx/site.conf:/etc/nginx/conf.d/site.conf:ro
+      - ./html/:/static/html/
+    ports:
+      - "81:80"
+      - "8001:80"
+
+networks:
+  default:
+    name: movies_networks
+    external: true

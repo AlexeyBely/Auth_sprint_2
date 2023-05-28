@@ -1,0 +1,62 @@
+version: '3'
+volumes:
+  auth_db_data_tests:
+    name: ${CONTAINER_PREFIX}auth_db_tests
+  auth_data_tests:
+    name: ${CONTAINER_PREFIX}auth_tests
+  auth_redis_data_tests:
+    name: ${CONTAINER_PREFIX}auth_redis_tests
+  auth_tests_data:
+    name: ${CONTAINER_PREFIX}auth_tests
+
+services:  
+  auth_db:
+    image: postgres:latest
+    container_name: ${CONTAINER_PREFIX}auth_db_tests
+    volumes:
+      -   auth_db_data_tests:/var/lib/postgresql/data/
+    environment:
+      POSTGRES_DB: "${AUTH_POSTGRES_DB}"
+      POSTGRES_USER: "${AUTH_POSTGRES_USER}"
+      POSTGRES_PASSWORD: "${AUTH_POSTGRES_PASSWORD}"
+
+  auth:
+    build: ../auth
+    container_name: ${CONTAINER_PREFIX}auth_tests
+    depends_on:
+      - auth_db
+      - auth_redis
+    volumes:
+      - auth_data_tests:/data
+      - ../utils/:/app/utils/
+    entrypoint: >
+      sh -c "python ../utils/wait-for-postgres.py host=${AUTH_POSTGRES_HOST} port=${AUTH_POSTGRES_PORT} &&
+             python ../utils/wait-for-redis.py host=${AUTH_REDIS_HOST} port=${AUTH_REDIS_PORT} &&
+             flask db upgrade &&
+             flask superuser create --email='${AUTH_SUPERUSER_EMAIL}' --password='${AUTH_SUPERUSER_PASSWORD}' \
+                                    --full_name='${AUTH_SUPERUSER_FULLNAME}' &&
+             python pywsgi.py"
+    expose:
+      - ${FLASK_PORT}
+    env_file:
+      - ./.env
+
+  auth_redis:
+    image: redis:latest
+    container_name: ${CONTAINER_PREFIX}auth_redis_tests
+    volumes:
+      - auth_redis_data_tests:/data
+
+  tests:
+    build: .
+    container_name: ${CONTAINER_PREFIX}tests
+    entrypoint: >
+      sh -c "python /app/utils/wait-for-flask.py host=${FLASK_HOST} port=${FLASK_PORT}
+             pytest --capture=no /tests/"
+    env_file:
+      - ./.env
+    volumes:
+      - auth_tests_data:/data
+      - ../utils/:/app/utils/
+    depends_on:
+      - auth

@@ -1,0 +1,50 @@
+syntax = "proto3";
+
+package rolescontrol;
+
+
+service RolesControl {
+
+  rpc GetUserInfo(Uuid) returns (UserInfo) {}
+  // Get info user from UUID user
+
+  rpc CreateRole(NewRole) returns (Uuid) {}
+  // Create role
+
+  rpc UpdateRole(Role) returns (OperationResult) {}
+  // Create role
+  
+  rpc ProvideRoleUser(ProvideRole) returns (OperationResult) {}
+  // Provide a role to a user
+  
+  rpc RevokeRoleUser(ProvideRole) returns (OperationResult) {}
+  // Revoke a role to a user
+}
+
+
+message UserInfo {
+  string email = 1; 
+}
+
+message NewRole {
+  string name = 1;
+}
+
+message Role {
+  string role_id = 1;
+  string name = 2;
+}
+
+message ProvideRole {
+  string user_id = 1;
+  string role_id = 2;
+  string jti_to_compromised = 3;
+}
+
+message Uuid {
+  string id = 1;
+}
+
+message OperationResult {
+  bool successful = 1;
+}
